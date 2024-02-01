@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"strings"
@@ -21,5 +22,14 @@ func SendPostRequest(url string, cookie string, jsonBody string) string {
 		PrintError(err)
 	}(resp.Body)
 	all, err := io.ReadAll(resp.Body)
-	return string(all)
+	jsonResp := string(all)
+	return jsonResp
+}
+
+// GetResponse 获取响应信息
+func GetResponse(jsonStr string) *ResponseVO {
+	vo := ResponseVO{}
+	err := json.Unmarshal([]byte(jsonStr), &vo)
+	PrintError(err)
+	return &vo
 }

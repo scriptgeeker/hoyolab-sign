@@ -1,20 +1,22 @@
 package main
 
 import (
+	"errors"
 	"fmt"
-	"os"
 	"strconv"
+	"strings"
+	"time"
 )
 
 // SelectLang 选择语言
-func SelectLang() string {
-	for index, item := range LangZoneList {
-		fmt.Printf("%d %s\n", index, item[0])
+func SelectLang() LangVO {
+	for index, vo := range LangList {
+		fmt.Printf("%d %s\n", index, vo.Name)
 	}
 	index := -1
-	limit := len(LangZoneList) - 1
+	limit := len(LangList) - 1
 	for index < 0 || limit < index {
-		tip := fmt.Sprintf(TipMap[Zone][0], 0, limit)
+		tip := fmt.Sprintf(TipMap[Lang][0], 0, limit)
 		num, err := strconv.Atoi(GetUserInput(tip))
 		if err != nil {
 			index = -1
@@ -22,31 +24,30 @@ func SelectLang() string {
 			index = num
 		}
 	}
-	return LangZoneList[index][0]
+	return LangList[index]
 }
 
-// LoadLangZone 加载语言选项
-func LoadLangZone() (string, string) {
+// LoadLang 加载语言选项
+func LoadLang() string {
 	path := GetAbsPath(LANG_PATH)
 	if !FileExists(path) {
-		key := SelectLang()
-		content := "# " + key + "\n" + LangZoneMap[key]
+		vo := SelectLang()
+		content := "# " + vo.Name + "\n" + vo.Lang
 		WriteFileContent(path, content)
 	}
 	content := ReadFileContent(path)
-	zone := PurifyString(content)
-	lang, ok := ZoneLangMap[zone]
+	lang := PurifyString(content)
+	_, ok := GamesMap[lang]
 	if !ok {
-		err := os.Remove(path)
-		PrintError(err)
-		return LoadLangZone()
+		RemoveFile(path)
+		return LoadLang()
 	}
-	return lang, zone
+	return lang
 }
 
 // InputCookie 获取 Cookie
 func InputCookie() string {
-	tip := TipMap[Zone][1]
+	tip := TipMap[Lang][1]
 	input := GetUserInput(tip)
 	return input
 }
@@ -56,16 +57,15 @@ func LoadCookie() string {
 	path := GetAbsPath(COOKIE_PATH)
 	if !FileExists(path) {
 		input := InputCookie()
-		content := "# Cookie-Editor: Export As Header String\n" + input
+		content := "# By Cookie-Editor: Export As Header String\n" + input
 		WriteFileContent(path, content)
 	}
 	content := ReadFileContent(path)
 	cookie := PurifyString(content)
 	info := GetUserInfo(cookie)
 	if info == nil {
-		fmt.Println(TipMap[Zone][2])
-		err := os.Remove(path)
-		PrintError(err)
+		fmt.Println(TipMap[Lang][2])
+		RemoveFile(path)
 		return LoadCookie()
 	}
 	return cookie
@@ -79,64 +79,94 @@ func GetUserInfo(cookie string) map[string]string {
 	if resp.Retcode != 0 {
 		return nil
 	}
-	info := make(map[string]string)
-	temp := resp.Data.(map[string]interface{})["user_info"]
-	for key, val := range temp.(map[string]interface{}) {
-		info[key] = fmt.Sprint(val)
+	user := make(map[string]string)
+	info := resp.Data.(map[string]interface{})["user_info"]
+	for key, val := range info.(map[string]interface{}) {
+		user[key] = fmt.Sprint(val)
 	}
-	return info
+	return user
 }
 
-// InputActIds 输入角色 ID
-func InputActIds() string {
+// DefaultActId 默认 act_id
+func DefaultActId() string {
 	content := ""
-	fmt.Println(TipMap[Zone][3])
-	for _, name := range GameNameMap[Zone] {
-		sign := SignMap[name]
-		tip := fmt.Sprintf(TipMap[Zone][4], name)
-		input := GetUserInput(tip)
-		if 0 < len(input) {
-			content += "# " + name + "\n"
-			content += sign + "=" + input + "\n"
-			content += "\n"
-		}
+	for _, game := range GamesMap[Lang] {
+		content += "# " + game.Name + "\n"
+		content += game.ActId + "\n"
+		content += "\n"
 	}
 	return content
 }
 
-// LoadActIds 加载角色 ID
-func LoadActIds() map[string]string {
+// ParseActId 解析 act_id
+func ParseActId(content string) []GameVO {
+	dict := make(map[string]GameVO)
+	for _, vo := range GamesMap[Lang] {
+		dict[vo.Name] = vo
+	}
+	list := make([]GameVO, 0, 10)
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		if strings.HasPrefix(line, "#") && (i+1) < len(lines) {
+			line = strings.TrimPrefix(line, "#")
+			id := strings.TrimSpace(lines[i+1])
+			vo, ok := dict[strings.TrimSpace(line)]
+			if ok {
+				vo.ActId = id
+				list = append(list, vo)
+			}
+
+		}
+	}
+	return list
+}
+
+// UpdateGamesMap 更新游戏信息
+func UpdateGamesMap() {
 	path := GetAbsPath(ACT_IDS_PATH)
 	if !FileExists(path) {
-		content := InputActIds()
+		content := DefaultActId()
 		WriteFileContent(path, content)
 	}
 	content := ReadFileContent(path)
-	confStr := PurifyString(content)
-	confMap := ConfStrToMap(confStr)
-	if len(confMap) == 0 {
-		err := os.Remove(path)
-		PrintError(err)
-		return LoadActIds()
-	}
-	return confMap
+	GamesMap[Lang] = ParseActId(content)
 }
 
 // HoyoLabSign 米哈游社区签到
-func HoyoLabSign(cookie string, actIds map[string]string, userInfo map[string]string) {
-	for _, name := range GameNameMap[Zone] {
-		sign := SignMap[name]
-		url := ApiMap[sign]
-		id, ok := actIds[sign]
-		if ok && 0 < len(id) {
-			url = fmt.Sprintf("%s?lang=%s", url, Zone)
-			jsonBody := fmt.Sprintf(`{"act_id":"%s","lang":"%s"}`, id, Zone)
-			jsonStr := SendPostRequest(url, cookie, jsonBody)
-			resp := GetResponse(jsonStr)
-			email := userInfo["email"]
-			PrintAndLog(SIGN_LOG_PATH, []string{
-				name, email, resp.Message, url, jsonBody, jsonStr,
-			})
+func HoyoLabSign(userInfo map[string]string) {
+	for _, game := range GamesMap[Lang] {
+		url := fmt.Sprintf("%s?lang=%s", game.SignUrl, Lang)
+		jsonBody := fmt.Sprintf(`{"act_id":"%s","lang":"%s"}`, game.ActId, Lang)
+		jsonResp := SendPostRequest(url, Cookie, jsonBody)
+		msg := GetResponse(jsonResp).Message
+		if msg == "OK" {
+			msg = TipMap[Lang][3]
 		}
+		email := userInfo["email"]
+		PrintAndLog(SIGN_LOG_PATH, []string{
+			game.Name, email, msg, url, jsonBody, jsonResp,
+		})
 	}
+}
+
+// TimedSign 定时签到
+func TimedSign() {
+	// 恐慌异常处理
+	defer func() {
+		err := recover()
+		if err != nil {
+			PrintError(errors.New(fmt.Sprint(err)))
+			time.Sleep(60 * time.Second) // 1 分钟后重试
+			TimedSign()
+		}
+	}()
+	// 开启定时任务
+	SetInterval(Interval, func() error {
+		userInfo := GetUserInfo(Cookie)
+		if userInfo == nil {
+			return errors.New("cookie has expired")
+		}
+		HoyoLabSign(userInfo)
+		return nil
+	})
 }

@@ -32,9 +32,12 @@ func (timer *Timer) Start() {
 
 // SetInterval 循环执行任务
 func SetInterval(interval int, function Fn) {
-	if function() != nil {
+	// 立即执行一次
+	err := function()
+	if err != nil {
 		return
 	}
+	// 再循环执行
 	duration := time.Duration(interval) * time.Second
 	timer := time.NewTimer(duration)
 	for {
